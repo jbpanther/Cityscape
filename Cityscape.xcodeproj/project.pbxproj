@@ -10,6 +10,7 @@
 		3B01F2C02EDD361B00FED5EC /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 3B01F2BF2EDD361B00FED5EC /* FirebaseAuth */; };
 		3B01F2C22EDD361B00FED5EC /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 3B01F2C12EDD361B00FED5EC /* FirebaseFirestore */; };
 		3B01F2C42EDD361B00FED5EC /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = 3B01F2C32EDD361B00FED5EC /* FirebaseStorage */; };
+		3B68474E3027D2F400B5F2D8 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 3B68474D3027D2F400B5F2D8 /* Supabase */; };
 		3BD86A322EDFA9BF003F68F8 /* .gitignore in Resources */ = {isa = PBXBuildFile; fileRef = 3BD86A312EDFA9BF003F68F8 /* .gitignore */; };
 		3BD86A382EDFACB5003F68F8 /* GooglePlacesSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 3BD86A372EDFACB5003F68F8 /* GooglePlacesSwift */; };
 /* End PBXBuildFile section */
@@ -45,6 +46,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3B68474E3027D2F400B5F2D8 /* Supabase in Frameworks */,
 				3B01F2C02EDD361B00FED5EC /* FirebaseAuth in Frameworks */,
 				3B01F2C22EDD361B00FED5EC /* FirebaseFirestore in Frameworks */,
 				3B01F2C42EDD361B00FED5EC /* FirebaseStorage in Frameworks */,
@@ -96,6 +98,7 @@
 				3B01F2C12EDD361B00FED5EC /* FirebaseFirestore */,
 				3B01F2C32EDD361B00FED5EC /* FirebaseStorage */,
 				3BD86A372EDFACB5003F68F8 /* GooglePlacesSwift */,
+				3B68474D3027D2F400B5F2D8 /* Supabase */,
 			);
 			productName = Cityscape;
 			productReference = 3B9F7C4C2E975BB60030C09E /* Cityscape.app */;
@@ -109,7 +112,7 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 2600;
-				LastUpgradeCheck = 2600;
+				LastUpgradeCheck = 2660;
 				TargetAttributes = {
 					3B9F7C4B2E975BB60030C09E = {
 						CreatedOnToolsVersion = 26.0;
@@ -128,6 +131,7 @@
 			packageReferences = (
 				3B01F2BE2EDD361B00FED5EC /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
 				3BD86A362EDFACB5003F68F8 /* XCRemoteSwiftPackageReference "ios-places-sdk" */,
+				3B68474C3027D2F400B5F2D8 /* XCRemoteSwiftPackageReference "supabase-swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 3B9F7C4D2E975BB60030C09E /* Products */;
@@ -220,6 +224,7 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
@@ -277,6 +282,7 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				VALIDATE_PRODUCT = YES;
 			};
@@ -382,6 +388,14 @@
 				minimumVersion = 12.6.0;
 			};
 		};
+		3B68474C3027D2F400B5F2D8 /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/supabase/supabase-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.5.1;
+			};
+		};
 		3BD86A362EDFACB5003F68F8 /* XCRemoteSwiftPackageReference "ios-places-sdk" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/googlemaps/ios-places-sdk";
@@ -407,6 +421,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 3B01F2BE2EDD361B00FED5EC /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseStorage;
+		};
+		3B68474D3027D2F400B5F2D8 /* Supabase */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3B68474C3027D2F400B5F2D8 /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Supabase;
 		};
 		3BD86A372EDFACB5003F68F8 /* GooglePlacesSwift */ = {
 			isa = XCSwiftPackageProductDependency;
