@@ -3,17 +3,17 @@
 //  Cityscape
 //
 //  Created by Jackson Butler on 10/8/25.
+//  Rewritten during Phase C of the Firebase → Supabase migration.
 //
 
 import SwiftUI
 import MapKit
-import FirebaseFirestore
 import Supabase
 
 enum ActiveSheet: Identifiable {
     case bottom
     case create
-    
+
     var id: Int {
         switch self {
         case .bottom: return 0
@@ -23,8 +23,12 @@ enum ActiveSheet: Identifiable {
 }
 
 struct MapView: View {
-    
-    @FirestoreQuery(collectionPath: "events") var events: [Event]
+
+    // Events are loaded once on appear and re-loaded whenever the create-event
+    // sheet closes. If we want live updates later, swap this for a Supabase
+    // Realtime subscription — the shape of `events` doesn't need to change.
+    @State private var events: [Event] = []
+
     @State private var defaultEnable = true
     @State private var activeSheet: ActiveSheet? = .bottom
     @State private var lastPresentedSheet: ActiveSheet? = .bottom
@@ -33,15 +37,15 @@ struct MapView: View {
     @State private var cameraPosition: MapCameraPosition = .userLocation(fallback: .automatic)
     @State private var selectedEvent: Event?
     @Environment(\.dismiss) private var dismiss
-    
+
     var body: some View {
         NavigationStack {
-            
+
             ZStack {
-                
+
                 Map(position: $cameraPosition, selection: $selectedEvent) {
                     ForEach(events) { event in
-                        
+
                         let coordinate = CLLocationCoordinate2D(latitude: event.latitude,
                                                                 longitude: event.longitude)
                         Marker(event.name,
@@ -50,7 +54,7 @@ struct MapView: View {
                             .tag(event)
                     }
                     .tint(Color("cityscapePrimary"))
-                    
+
                     UserAnnotation()
                 }
                 .mapControls({
@@ -74,7 +78,6 @@ struct MapView: View {
                     }
                     ToolbarItem(placement: .primaryAction) {
                         Button {
-                            // Open the create-event sheet
                             activeSheet = .create
                             lastPresentedSheet = .create
                         } label: {
@@ -87,25 +90,26 @@ struct MapView: View {
                 DetailView(event: event)
             }
             .sheet(item: $activeSheet, onDismiss: {
-                // When a sheet is dismissed, if it was the create sheet,
-                // restore the bottom sheet; if it was the bottom sheet,
-                // do nothing.
+                // When the create sheet dismisses, reload events so any new
+                // one shows up, then restore the bottom sheet.
                 if lastPresentedSheet == .create {
+                    Task { await loadEvents() }
                     activeSheet = .bottom
                     lastPresentedSheet = .bottom
                 }
             }) { sheet in
                 switch sheet {
                 case .bottom:
-                    BottomSheetView(userLocation: locationManager.location?.coordinate) { event in
+                    BottomSheetView(events: events,
+                                    userLocation: locationManager.location?.coordinate) { event in
                         let coord = CLLocationCoordinate2D(latitude: event.latitude,
                                                            longitude: event.longitude)
-                        
+
                         withAnimation {
                             cameraPosition = .region(
                                 MKCoordinateRegion(
                                     center: coord,
-                                    latitudinalMeters: 1000,    // adjust zoom as desired
+                                    latitudinalMeters: 1000,
                                     longitudinalMeters: 1000
                                 )
                             )
@@ -115,13 +119,10 @@ struct MapView: View {
                         [.fraction(0.18), .fraction(0.35), .large],
                         selection: $bottomSheetDetent
                     )
-                    // Show the little drag indicator at the top
                     .presentationDragIndicator(.visible)
-                    // Don't allow swiping down to fully dismiss
                     .interactiveDismissDisabled()
-                    // Allow interacting with the content behind the sheet
                     .presentationBackgroundInteraction(.enabled)
-                    
+
                 case .create:
                     NavigationStack {
                         CustomEventView(event: Event())
@@ -136,23 +137,30 @@ struct MapView: View {
                     lastPresentedSheet = .bottom
                 }
             }
+            .task {
+                await loadEvents()
+            }
             .onAppear {
-                // Ensure the bottom sheet is visible on first load
                 activeSheet = .bottom
                 lastPresentedSheet = .bottom
-                }
             }
         }
     }
 
+    private func loadEvents() async {
+        events = await EventViewModel.fetchAll()
+    }
+}
 
 
 struct BottomSheetView: View {
-    
-    @FirestoreQuery(collectionPath: "events") var events: [Event]
+
+    let events: [Event]
+    let userLocation: CLLocationCoordinate2D?
+    var onEventSelected: (Event) -> Void
+
     @State private var searchText = ""
-    var userLocation: CLLocationCoordinate2D?
-    
+
     private var sortedEvents: [Event] {
         guard let userLocation else { return events }
 
@@ -173,18 +181,14 @@ struct BottomSheetView: View {
             event.name.localizedCaseInsensitiveContains(searchText)
         }
     }
-    
-    /// Called when the user taps an event in the list
-    var onEventSelected: (Event) -> Void
-    
+
     var body: some View {
         VStack(spacing: 12) {
-            // Optional: custom grabber if you want more control
             Capsule()
                 .frame(width: 40, height: 5)
                 .foregroundStyle(.secondary)
                 .padding(.top, 8)
-            
+
             HStack {
                 Image(systemName: "magnifyingglass")
                 TextField("Search for Event", text: $searchText)
@@ -197,8 +201,7 @@ struct BottomSheetView: View {
                     .fill(.thinMaterial)
             )
             .padding(.horizontal)
-            
-            // Main content of your sheet
+
             List {
                 Section(header: Text("Nearby Events")) {
                     ForEach(visibleEvents) { event in
@@ -214,7 +217,7 @@ struct BottomSheetView: View {
                                     .foregroundStyle(.secondary)
                             }
                         }
-                        .contentShape(Rectangle()) // make whole row tappable
+                        .contentShape(Rectangle())
                         .onTapGesture {
                             onEventSelected(event)
                         }

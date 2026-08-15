@@ -16,7 +16,6 @@ struct CustomEventView: View {
     @State private var mapCameraPosition: MapCameraPosition = .automatic
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var selectedImage: Image?
-    @State private var photo = Photo()
     @State private var data = Data()
     @Environment(\.dismiss) private var dismiss
     
@@ -99,7 +98,7 @@ struct CustomEventView: View {
                                 if let image = try await selectedPhoto?.loadTransferable(type: Image.self) {
                                     selectedImage = image
                                 }
-                                // Get raw data from image so we can save it to Firebase Storage
+                                // Get raw data from image so we can save it to Supabase Storage
                                 guard let transferredData = try await selectedPhoto?.loadTransferable(type: Data.self) else {
                                     print("ERROR: Could not convert data from selectedPhoto")
                                     return
@@ -140,22 +139,20 @@ struct CustomEventView: View {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Save", systemImage: "checkmark") {
                     Task {
-                        // 1. Save the event first to get a valid event.id
-                        let id = await EventViewModel.saveEvent(event: event)
-                        if let id {
-                            // Ensure the local event has the same id that was saved in Firestore
-                            event.id = id
-
-                            // 2. Only attempt to save a photo if we actually have image data
-                            if !data.isEmpty {
-                                await PhotoViewModel.saveImage(event: event, photo: photo, data: data)
-                            }
-
-                            // 3. Dismiss once everything succeeds
-                            dismiss()
-                        } else {
+                        // 1. Save the event first so we have an id to attach the photo to.
+                        guard let idString = await EventViewModel.saveEvent(event: event),
+                              let eventId = UUID(uuidString: idString) else {
                             print("ERROR: Save on CustomEventView did not work")
+                            return
                         }
+                        event.id = eventId
+
+                        // 2. Upload the photo if the user picked one.
+                        if !data.isEmpty {
+                            _ = await PhotoViewModel.saveImage(eventId: eventId, data: data)
+                        }
+
+                        dismiss()
                     }
                 }
             }

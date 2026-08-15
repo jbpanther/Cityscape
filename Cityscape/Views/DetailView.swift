@@ -3,32 +3,29 @@
 //  Cityscape
 //
 //  Created by Jackson Butler on 11/30/25.
+//  Rewritten during Phase C of the Firebase → Supabase migration.
 //
 
 import SwiftUI
-import Firebase
-import FirebaseFirestore
 
 struct DetailView: View {
-    
-    @FirestoreQuery(collectionPath: "events") var photos: [Photo]
+
     @State var event: Event
+    @State private var photos: [Photo] = []
     @Environment(\.dismiss) private var dismiss
-    
+
     private var startDateTimeText: String {
-        let date = event.startTime ?? event.startDate
-        return date.formatted(date: .abbreviated, time: .shortened)
+        event.startDate.formatted(date: .abbreviated, time: .shortened)
     }
-    
+
     private var endDateTimeText: String {
-        let date = event.endTime ?? event.endDate
-        return date.formatted(date: .abbreviated, time: .shortened)
+        event.endDate.formatted(date: .abbreviated, time: .shortened)
     }
-    
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                
+
                 // Hero image / photo section
                 Group {
                     if !photos.isEmpty {
@@ -65,7 +62,7 @@ struct DetailView: View {
                             RoundedRectangle(cornerRadius: 16, style: .continuous)
                                 .fill(.thinMaterial)
                                 .frame(height: 220)
-                            
+
                             VStack(spacing: 8) {
                                 Image(systemName: "photo.on.rectangle.angled")
                                     .font(.system(size: 40, weight: .regular))
@@ -77,14 +74,14 @@ struct DetailView: View {
                         }
                     }
                 }
-                
+
                 // Title + type chip
                 VStack(alignment: .leading, spacing: 8) {
                     Text(event.name)
                         .font(.title.bold())
                         .foregroundStyle(.primary)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    
+
                     if let type = event.eventType {
                         Text(type.rawValue)
                             .font(.subheadline.weight(.semibold))
@@ -97,8 +94,7 @@ struct DetailView: View {
                             .foregroundStyle(.blue)
                     }
                 }
-                
-                // When section
+
                 GroupBox("When") {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
@@ -106,12 +102,12 @@ struct DetailView: View {
                             Text(startDateTimeText)
                         }
                         .font(.subheadline)
-                        
+
                         Image(systemName: "arrow.down")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .padding(.vertical, 2)
-                        
+
                         HStack {
                             Image(systemName: "flag.checkered")
                             Text(endDateTimeText)
@@ -119,8 +115,7 @@ struct DetailView: View {
                         .font(.subheadline)
                     }
                 }
-                
-                // Description section
+
                 GroupBox("About this event") {
                     if event.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         Text("No description provided.")
@@ -132,7 +127,7 @@ struct DetailView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-                
+
                 Spacer(minLength: 20)
             }
             .padding()
@@ -141,10 +136,10 @@ struct DetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             guard let id = event.id else {
-                print("New record - has no id")
+                print("Event has no id — nothing to load photos for")
                 return
             }
-            $photos.path = "events/\(id)/photos"
+            photos = await PhotoViewModel.fetchPhotos(for: id)
         }
     }
 }

@@ -1,20 +1,30 @@
--- Cityscape initial schema
+-- Cityscape initial schema (v2)
 -- Run this in the Supabase SQL editor (Dashboard → SQL Editor → New query).
--- Assumes a brand-new project. Safe to re-run — everything uses IF NOT EXISTS.
+--
+-- Safe to re-run — everything uses IF NOT EXISTS or DROP-then-CREATE for the
+-- generated `location` column. If you already ran v1 and want to reset:
+--     drop table if exists public.photos cascade;
+--     drop table if exists public.events cascade;
+-- then run this file.
 
 -- ---------------------------------------------------------------------------
 -- Extensions
 -- ---------------------------------------------------------------------------
 
 -- PostGIS gives us proper geographic types + spatial queries (ST_DWithin, etc).
--- Supabase ships this available but not enabled by default.
 create extension if not exists postgis;
 
 
 -- ---------------------------------------------------------------------------
 -- events table
 -- ---------------------------------------------------------------------------
-
+--
+-- Design note: we store latitude + longitude as plain doubles (which is what
+-- the Swift app naturally has from CoreLocation) and let a trigger keep the
+-- PostGIS `location` column in sync. This gives us both:
+--   - Simple inserts from the app (no GeoJSON encoding required)
+--   - Fast spatial queries via `location` + its GIST index
+--
 create table if not exists public.events (
     id              uuid primary key default gen_random_uuid(),
 
@@ -23,9 +33,12 @@ create table if not exists public.events (
     description     text not null default '',
     event_type      text,  -- keep unconstrained for now; add CHECK/enum later once categories stabilize
 
-    -- Location. geography(Point, 4326) = lat/lng in the same coordinate system GPS uses (WGS84).
-    -- Use ST_MakePoint(longitude, latitude) — note: longitude first, latitude second.
-    location        geography(Point, 4326) not null,
+    -- Location — plain doubles as the source of truth.
+    latitude        double precision not null,
+    longitude       double precision not null,
+    -- PostGIS geography, auto-populated by trigger below. Do NOT insert into this directly.
+    location        geography(Point, 4326),
+
     city            text not null,  -- 'nyc' | 'boston' | 'london' for now. Kept as text so we can add cities without a schema change.
 
     -- When
@@ -59,6 +72,29 @@ create index if not exists events_created_at_idx on public.events (created_at de
 
 
 -- ---------------------------------------------------------------------------
+-- Auto-populate the `location` column from latitude/longitude
+-- ---------------------------------------------------------------------------
+-- Trigger fires before insert or update. Keeps `location` in sync with the
+-- lat/lng columns so callers only ever have to set the two numbers.
+create or replace function public.set_event_location()
+returns trigger
+language plpgsql
+as $$
+begin
+    new.location = ST_SetSRID(ST_MakePoint(new.longitude, new.latitude), 4326)::geography;
+    new.updated_at = now();
+    return new;
+end;
+$$;
+
+drop trigger if exists events_set_location on public.events;
+create trigger events_set_location
+    before insert or update on public.events
+    for each row
+    execute function public.set_event_location();
+
+
+-- ---------------------------------------------------------------------------
 -- photos table
 -- ---------------------------------------------------------------------------
 
@@ -78,28 +114,6 @@ create table if not exists public.photos (
 );
 
 create index if not exists photos_event_id_idx on public.photos (event_id);
-
-
--- ---------------------------------------------------------------------------
--- updated_at trigger for events
--- ---------------------------------------------------------------------------
-
--- Keeps events.updated_at accurate whenever a row is modified.
-create or replace function public.set_updated_at()
-returns trigger
-language plpgsql
-as $$
-begin
-    new.updated_at = now();
-    return new;
-end;
-$$;
-
-drop trigger if exists events_set_updated_at on public.events;
-create trigger events_set_updated_at
-    before update on public.events
-    for each row
-    execute function public.set_updated_at();
 
 
 -- ---------------------------------------------------------------------------

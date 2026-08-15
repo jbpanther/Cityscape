@@ -3,48 +3,51 @@
 //  Cityscape
 //
 //  Created by Jackson Butler on 11/30/25.
+//  Rewritten during Phase C of the Firebase → Supabase migration.
+//
+//  Two related types:
+//    - `Photo`         : row shape as read from Postgres
+//    - `PhotoInsert`   : minimal shape for creating a new photo record
 //
 
 import Foundation
-import FirebaseFirestore
 import Supabase
 
-class Photo: Identifiable, Codable, Equatable, Hashable {
-    @DocumentID var id: String?
-    var imageURLString = "" //this will hold the URL string
-    var description = ""
-    // Auth moved to Supabase in Phase B — pull the reviewer email from the
-    // Supabase session instead of Firebase's currentUser.
-    var reviewer: String = SupabaseManager.shared.auth.currentUser?.email ?? ""
-    var postedOn: Date = Date()
+struct Photo: Codable, Identifiable, Hashable {
+    var id: UUID?
+    var eventId: UUID?
+    var imageURLString: String = ""
+    var description: String = ""
+    var reviewerId: UUID?
+    var reviewerEmail: String? = SupabaseManager.shared.auth.currentUser?.email
+    var postedAt: Date = Date()
 
-    init(
-        id: String? = nil,
-        imageURLString: String = "",
-        description: String = "",
-        reviewer: String = SupabaseManager.shared.auth.currentUser?.email ?? "",
-        postedOn: Date = Date()
-    ) {
-        self.id = id
-        self.imageURLString = imageURLString
-        self.description = description
-        self.reviewer = reviewer
-        self.postedOn = postedOn
+    enum CodingKeys: String, CodingKey {
+        case id
+        case eventId       = "event_id"
+        case imageURLString = "image_url"
+        case description
+        case reviewerId    = "reviewer_id"
+        case reviewerEmail = "reviewer_email"
+        case postedAt      = "posted_at"
     }
+}
 
-    static func == (lhs: Photo, rhs: Photo) -> Bool {
-        return lhs.id == rhs.id &&
-               lhs.imageURLString == rhs.imageURLString &&
-               lhs.description == rhs.description &&
-               lhs.reviewer == rhs.reviewer &&
-               lhs.postedOn == rhs.postedOn
-    }
 
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
-        hasher.combine(imageURLString)
-        hasher.combine(description)
-        hasher.combine(reviewer)
-        hasher.combine(postedOn)
+/// Payload shape for creating a photo row. Excludes the DB-generated id and
+/// postedAt timestamp.
+struct PhotoInsert: Encodable {
+    var eventId: UUID
+    var imageURL: String
+    var description: String
+    var reviewerId: UUID?
+    var reviewerEmail: String?
+
+    enum CodingKeys: String, CodingKey {
+        case eventId       = "event_id"
+        case imageURL      = "image_url"
+        case description
+        case reviewerId    = "reviewer_id"
+        case reviewerEmail = "reviewer_email"
     }
 }
