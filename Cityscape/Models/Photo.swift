@@ -7,20 +7,22 @@
 
 import Foundation
 import FirebaseFirestore
-import FirebaseAuth
+import Supabase
 
 class Photo: Identifiable, Codable, Equatable, Hashable {
     @DocumentID var id: String?
     var imageURLString = "" //this will hold the URL string
     var description = ""
-    var reviewer: String = Auth.auth().currentUser?.email ?? ""
+    // Auth moved to Supabase in Phase B — pull the reviewer email from the
+    // Supabase session instead of Firebase's currentUser.
+    var reviewer: String = SupabaseManager.shared.auth.currentUser?.email ?? ""
     var postedOn: Date = Date()
-    
+
     init(
         id: String? = nil,
         imageURLString: String = "",
         description: String = "",
-        reviewer: String = Auth.auth().currentUser?.email ?? "",
+        reviewer: String = SupabaseManager.shared.auth.currentUser?.email ?? "",
         postedOn: Date = Date()
     ) {
         self.id = id

@@ -7,8 +7,8 @@
 
 import SwiftUI
 import MapKit
-import FirebaseAuth
 import FirebaseFirestore
+import Supabase
 
 enum ActiveSheet: Identifiable {
     case bottom
@@ -61,12 +61,14 @@ struct MapView: View {
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Sign Out") {
-                            do {
-                                try Auth.auth().signOut()
-                                print("Sign out successful")
-                                dismiss()
-                            } catch {
-                                print("ERROR: Could not sign out")
+                            Task {
+                                do {
+                                    try await SupabaseManager.shared.auth.signOut()
+                                    print("Sign out successful")
+                                    dismiss()
+                                } catch {
+                                    print("ERROR: Could not sign out: \(error.localizedDescription)")
+                                }
                             }
                         }
                     }
