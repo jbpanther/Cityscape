@@ -7,9 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		3B01F2C02EDD361B00FED5EC /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 3B01F2BF2EDD361B00FED5EC /* FirebaseAuth */; };
-		3B01F2C22EDD361B00FED5EC /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 3B01F2C12EDD361B00FED5EC /* FirebaseFirestore */; };
-		3B01F2C42EDD361B00FED5EC /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = 3B01F2C32EDD361B00FED5EC /* FirebaseStorage */; };
 		3B68474E3027D2F400B5F2D8 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 3B68474D3027D2F400B5F2D8 /* Supabase */; };
 		3BD86A322EDFA9BF003F68F8 /* .gitignore in Resources */ = {isa = PBXBuildFile; fileRef = 3BD86A312EDFA9BF003F68F8 /* .gitignore */; };
 		3BD86A382EDFACB5003F68F8 /* GooglePlacesSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 3BD86A372EDFACB5003F68F8 /* GooglePlacesSwift */; };
@@ -47,9 +44,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				3B68474E3027D2F400B5F2D8 /* Supabase in Frameworks */,
-				3B01F2C02EDD361B00FED5EC /* FirebaseAuth in Frameworks */,
-				3B01F2C22EDD361B00FED5EC /* FirebaseFirestore in Frameworks */,
-				3B01F2C42EDD361B00FED5EC /* FirebaseStorage in Frameworks */,
 				3BD86A382EDFACB5003F68F8 /* GooglePlacesSwift in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -94,9 +88,6 @@
 			);
 			name = Cityscape;
 			packageProductDependencies = (
-				3B01F2BF2EDD361B00FED5EC /* FirebaseAuth */,
-				3B01F2C12EDD361B00FED5EC /* FirebaseFirestore */,
-				3B01F2C32EDD361B00FED5EC /* FirebaseStorage */,
 				3BD86A372EDFACB5003F68F8 /* GooglePlacesSwift */,
 				3B68474D3027D2F400B5F2D8 /* Supabase */,
 			);
@@ -129,7 +120,6 @@
 			mainGroup = 3B9F7C432E975BB60030C09E;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				3B01F2BE2EDD361B00FED5EC /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
 				3BD86A362EDFACB5003F68F8 /* XCRemoteSwiftPackageReference "ios-places-sdk" */,
 				3B68474C3027D2F400B5F2D8 /* XCRemoteSwiftPackageReference "supabase-swift" */,
 			);
@@ -380,14 +370,6 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		3B01F2BE2EDD361B00FED5EC /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/firebase/firebase-ios-sdk.git";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 12.6.0;
-			};
-		};
 		3B68474C3027D2F400B5F2D8 /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/supabase/supabase-swift";
@@ -407,21 +389,6 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		3B01F2BF2EDD361B00FED5EC /* FirebaseAuth */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 3B01F2BE2EDD361B00FED5EC /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
-			productName = FirebaseAuth;
-		};
-		3B01F2C12EDD361B00FED5EC /* FirebaseFirestore */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 3B01F2BE2EDD361B00FED5EC /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
-			productName = FirebaseFirestore;
-		};
-		3B01F2C32EDD361B00FED5EC /* FirebaseStorage */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 3B01F2BE2EDD361B00FED5EC /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
-			productName = FirebaseStorage;
-		};
 		3B68474D3027D2F400B5F2D8 /* Supabase */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 3B68474C3027D2F400B5F2D8 /* XCRemoteSwiftPackageReference "supabase-swift" */;
