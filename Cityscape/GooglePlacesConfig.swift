@@ -10,6 +10,8 @@ import GooglePlacesSwift
 
 enum GooglePlacesConfig {
     static func configure() {
-        let _ = PlacesClient.provideAPIKey(Secrets.googleMapsAPIKey)
+        if !PlacesClient.provideAPIKey(Secrets.googleMapsAPIKey) {
+            NSLog("PLACES: SDK rejected the API key — place search will not work.")
+        }
     }
 }

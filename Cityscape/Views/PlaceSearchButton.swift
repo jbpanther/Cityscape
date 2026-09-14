@@ -68,7 +68,22 @@ struct PlaceSearchButton: View {
             },
             onError: { error in
                 errorMessage = error.localizedDescription
-                print("Places Autocomplete Error: \(error)")
+                // localizedDescription is usually generic for Places errors; dump the
+                // underlying NSError, whose userInfo carries the real server message.
+                let ns = error as NSError
+                NSLog("""
+                PLACES AUTOCOMPLETE ERROR
+                  description: %@
+                  domain:      %@
+                  code:        %d
+                  userInfo:    %@
+                  raw:         %@
+                """,
+                error.localizedDescription,
+                ns.domain,
+                ns.code,
+                String(describing: ns.userInfo),
+                String(describing: error))
             }
         )
         // Show error alert if something goes wrong
@@ -88,7 +103,7 @@ struct PlaceSearchButton: View {
         token: AutocompleteSessionToken
     ) {
         isLoading = true
-        
+
         Task {
             await fetchPlaceDetails(placeID: suggestion.placeID, token: token)
         }
@@ -131,6 +146,20 @@ struct PlaceSearchButton: View {
                 
             case .failure(let error):
                 errorMessage = "Failed to fetch place details: \(error.localizedDescription)"
+                let ns = error as NSError
+                NSLog("""
+                PLACES FETCH-PLACE ERROR
+                  description: %@
+                  domain:      %@
+                  code:        %d
+                  userInfo:    %@
+                  raw:         %@
+                """,
+                error.localizedDescription,
+                ns.domain,
+                ns.code,
+                String(describing: ns.userInfo),
+                String(describing: error))
             }
         }
     }
