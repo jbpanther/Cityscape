@@ -8,7 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		3B68474E3027D2F400B5F2D8 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 3B68474D3027D2F400B5F2D8 /* Supabase */; };
-		3BD86A322EDFA9BF003F68F8 /* .gitignore in Resources */ = {isa = PBXBuildFile; fileRef = 3BD86A312EDFA9BF003F68F8 /* .gitignore */; };
 		3BD86A382EDFACB5003F68F8 /* GooglePlacesSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 3BD86A372EDFACB5003F68F8 /* GooglePlacesSwift */; };
 /* End PBXBuildFile section */
 
@@ -138,7 +137,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				3BD86A322EDFA9BF003F68F8 /* .gitignore in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
