@@ -35,3 +35,19 @@ DerivedData/
 # MACOS SYSTEM FILES
 # Hidden file that macOS Finder creates - not part of your actual project.
 .DS_Store
+
+# PYTHON INGESTION PIPELINE (pipeline/)
+# .env holds the Supabase SERVICE-ROLE key and the Ticketmaster API key.
+# The service-role key bypasses Row-Level Security — it is a REAL secret,
+# unlike the anon key the iOS app uses. Never commit it.
+# `.env.example` IS committed (it has placeholders, no real values).
+.env
+.env.local
+
+# Virtual environment — recreate with `python3 -m venv .venv`, never commit.
+.venv/
+venv/
+
+# Python bytecode cache, regenerated automatically.
+__pycache__/
+*.pyc

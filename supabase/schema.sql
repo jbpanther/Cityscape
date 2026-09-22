@@ -47,6 +47,11 @@ create table if not exists public.events (
 
     -- Provenance — which ingestion path this event came from.
     source          text not null default 'user' check (source in ('user', 'scraped', 'partner')),
+    -- Which pipeline produced this row ('ticketmaster', 'nyc_open_data', ...) and
+    -- that source's own ID for the event. Both NULL for user-submitted events.
+    -- The unique index further down is what makes re-scraping idempotent.
+    source_name     text,
+    external_id     text,
 
     -- Engagement signals — baked in from day one so we don't retrofit later.
     -- Per-user vote tracking (who voted on what) will live in a separate table when we build voting.
@@ -69,6 +74,18 @@ create index if not exists events_city_endat_idx on public.events (city, end_at)
 
 -- Support ordering feeds by freshness.
 create index if not exists events_created_at_idx on public.events (created_at desc);
+
+-- Makes re-scraping safe: a second run UPDATEs the matching row instead of
+-- inserting a duplicate. Partial (WHERE ...) so the many user-submitted rows
+-- with NULLs in both columns never collide.
+create unique index if not exists events_source_external_id_uidx
+    on public.events (source_name, external_id)
+    where source_name is not null and external_id is not null;
+
+-- "Show me everything Ticketmaster gave us" — debugging and bulk cleanup.
+create index if not exists events_source_name_idx
+    on public.events (source_name)
+    where source_name is not null;
 
 
 -- ---------------------------------------------------------------------------

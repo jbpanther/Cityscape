@@ -1,0 +1,8 @@
+# Cityscape ingestion pipeline dependencies.
+# Install into a virtual environment:
+#     python3 -m venv .venv && source .venv/bin/activate
+#     pip install -r requirements.txt
+
+httpx==0.27.2          # HTTP client for talking to source APIs
+supabase==2.9.1        # Official Supabase Python client (writes to Postgres)
+python-dotenv==1.0.1   # Loads .env so keys never live in source code
