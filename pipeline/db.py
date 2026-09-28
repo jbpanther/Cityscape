@@ -34,8 +34,9 @@ def upsert_events(client, rows, batch_size: int = BATCH_SIZE) -> int:
     """
     Insert-or-update events, matching on (source_name, external_id).
 
-    That pair is backed by the partial unique index added in migration 001 —
-    it is what makes this operation idempotent. Run the pipeline five times and
+    That pair is backed by the unique index from migrations 001/002 — it is what
+    makes this operation idempotent. The index must NOT be partial, or this call
+    fails with 42P10; see migration 002. Run the pipeline five times and
     you get one copy of each event, with the latest details.
 
     Returns the number of rows written.

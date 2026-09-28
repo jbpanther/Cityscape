@@ -76,11 +76,16 @@ create index if not exists events_city_endat_idx on public.events (city, end_at)
 create index if not exists events_created_at_idx on public.events (created_at desc);
 
 -- Makes re-scraping safe: a second run UPDATEs the matching row instead of
--- inserting a duplicate. Partial (WHERE ...) so the many user-submitted rows
--- with NULLs in both columns never collide.
+-- inserting a duplicate.
+--
+-- Deliberately NOT a partial index. An earlier version carried
+-- `where source_name is not null and external_id is not null`, which broke every
+-- upsert — Postgres cannot infer a partial index for ON CONFLICT unless the
+-- statement repeats the predicate, and PostgREST cannot send one (see migration
+-- 002). The predicate was never needed anyway: NULLs are DISTINCT in a unique
+-- index, so user-submitted rows with both columns NULL already coexist freely.
 create unique index if not exists events_source_external_id_uidx
-    on public.events (source_name, external_id)
-    where source_name is not null and external_id is not null;
+    on public.events (source_name, external_id);
 
 -- "Show me everything Ticketmaster gave us" — debugging and bulk cleanup.
 create index if not exists events_source_name_idx

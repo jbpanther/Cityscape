@@ -148,7 +148,7 @@ struct MapView: View {
     }
 
     private func loadEvents() async {
-        events = await EventViewModel.fetchAll()
+        events = await EventViewModel.fetchUpcoming()
     }
 }
 

@@ -77,7 +77,8 @@ def run_city(source_module, city_key: str, args) -> list:
     )
 
     print(f"    fetched {stats['fetched']}  "
-          f"skipped {stats['skipped']} (no coordinates or no start time)  "
+          f"skipped {stats['skipped']} (no coords, no start time, "
+          f"already over, or >1yr out)  "
           f"duplicates {stats['duplicates']}  "
           f"usable {stats['usable']}")
     return rows
@@ -89,6 +90,16 @@ def main():
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(levelname)s %(name)s: %(message)s",
     )
+
+    # Ticketmaster authenticates via an `apikey=` QUERY PARAMETER, and httpx
+    # logs every request's full URL at INFO level — which means the key would be
+    # printed to the console and into any log file we ever redirect this to.
+    #
+    # Pin httpx to WARNING so request lines never appear. Do NOT lower this to
+    # see requests while debugging; use a proxy or print the params dict with
+    # the key removed instead.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
     source_module = SOURCES[args.source]
     city_keys = sorted(config.CITIES) if args.all_cities else [args.city]

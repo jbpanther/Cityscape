@@ -75,14 +75,41 @@ class EventViewModel {
         }
     }
 
-    /// Loads every event. Called from MapView on appear and after a new event
-    /// is saved. When we care about geo filtering we'll swap this for an RPC
-    /// that calls ST_DWithin server-side.
-    static func fetchAll() async -> [Event] {
+    /// How far ahead the map looks by default. Scraped ingestion puts roughly
+    /// 40 events a day into NYC alone, so an unbounded fetch would return over a
+    /// thousand pins and bury the map. A week is enough to feel alive without
+    /// becoming noise.
+    static let defaultHorizonDays = 7
+
+    /// Loads the events the map should currently show: anything not yet over,
+    /// starting within the next `daysAhead` days. Called from MapView on appear
+    /// and after a new event is saved.
+    ///
+    /// Note the two bounds do different jobs:
+    ///
+    ///   - `end_at >= now` filters out events that have finished. It is
+    ///     deliberately NOT `start_at >= now`, because a multi-day event that is
+    ///     currently mid-run should still appear on the map — filtering on the
+    ///     start date would make a weekend festival vanish the moment it opened.
+    ///   - `start_at <= now + daysAhead` keeps the far future out of the way.
+    ///
+    /// When we care about geo filtering we'll swap this for an RPC that calls
+    /// ST_DWithin server-side; the time window should move into that RPC too.
+    static func fetchUpcoming(daysAhead: Int = defaultHorizonDays) async -> [Event] {
+        // Supabase compares these as timestamptz, so they must be sent as
+        // ISO-8601 with an explicit offset — not localized description strings.
+        let formatter = ISO8601DateFormatter()
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+
+        let now = Date()
+        let horizon = Calendar.current.date(byAdding: .day, value: daysAhead, to: now) ?? now
+
         do {
             let events: [Event] = try await SupabaseManager.shared
                 .from("events")
                 .select()
+                .gte("end_at", value: formatter.string(from: now))
+                .lte("start_at", value: formatter.string(from: horizon))
                 .order("start_at", ascending: true)
                 .execute()
                 .value

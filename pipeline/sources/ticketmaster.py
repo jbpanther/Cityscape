@@ -42,6 +42,15 @@ SECONDS_BETWEEN_REQUESTS = 0.25
 DEFAULT_DURATION = timedelta(hours=3)        # a normal ticketed event
 ALL_DAY_DURATION = timedelta(hours=24)       # when only a date is known
 
+# How far into the future we are willing to believe a date.
+#
+# Multi-day events are WANTED — a weekend-long Oktoberfest or a year-long
+# America-250 celebration are real content, so there is deliberately NO maximum
+# duration here. But Ticketmaster also lists open-ended season passes and flex
+# admissions whose end dates run years out; those are listings, not events, and
+# they would sit on the map forever. One year is the hard cap.
+MAX_FUTURE = timedelta(days=365)
+
 
 # ---------------------------------------------------------------------------
 # Category mapping
@@ -178,7 +187,7 @@ def _description(raw: dict, venue: dict) -> str:
     return ""
 
 
-def normalize(raw: dict, city_key: str):
+def normalize(raw: dict, city_key: str, now: datetime | None = None):
     """
     Turn one Ticketmaster event into an `events` row.
 
@@ -210,6 +219,39 @@ def normalize(raw: dict, city_key: str):
     if start_utc is None:
         return None
     end_utc = _parse_end(raw, start_utc, time_known)
+
+    # `now` is injectable so tests can pin the clock, and so that every row in
+    # one run is judged against the same instant rather than a drifting clock.
+    if now is None:
+        now = datetime.now(timezone.utc)
+
+    # We only ingest events that have not started yet.
+    #
+    # This is what removes Ticketmaster's season passes and flex admissions,
+    # which advertise a start months in the past and an end months ahead. There
+    # is no date-based way to tell such a pass apart from a festival that is
+    # genuinely mid-run — both are "started, not yet over" — so we filter on the
+    # start date and accept that.
+    #
+    # Multi-day events are NOT lost by this. Upserts never delete, so a
+    # weekend-long Oktoberfest gets written while its start date is still in the
+    # future and then simply stays in the table for its whole run. This rule only
+    # governs what may be newly ADDED, and in practice it drops ~4 rows per 1,200.
+    if start_utc < now:
+        return None
+
+    # Starts further out than we will believe. Beyond a year is either a
+    # placeholder or a standing pass, not something to pin on a map today.
+    if start_utc > now + MAX_FUTURE:
+        return None
+
+    # Runs past the horizon: keep the event, but stop its end date running away.
+    # Clamping rather than skipping is deliberate — a genuinely long-running
+    # celebration should still appear; it just should not outlive the cap.
+    horizon = now + MAX_FUTURE
+    if end_utc > horizon:
+        log.debug("Clamping end date for %r from %s to horizon", name, end_utc)
+        end_utc = horizon
 
     return {
         "name": name,
@@ -335,10 +377,14 @@ def collect(api_key: str, city_key: str, city_config: dict,
     seen = 0
     skipped = 0
 
+    # One timestamp for the whole run, so a long run cannot judge its first and
+    # last rows against different clocks.
+    now = datetime.now(timezone.utc)
+
     for raw in fetch_events(api_key, city_key, city_config,
                             days_ahead=days_ahead, window_days=window_days, limit=limit):
         seen += 1
-        row = normalize(raw, city_key)
+        row = normalize(raw, city_key, now=now)
         if row is None:
             skipped += 1
             continue
