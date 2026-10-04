@@ -53,6 +53,10 @@ create table if not exists public.events (
     source_name     text,
     external_id     text,
 
+    -- Individual performances when one row stands for several (timed-entry
+    -- slots, multi-show days). NULL for a single showing. See migration 003.
+    showtimes       jsonb check (showtimes is null or jsonb_typeof(showtimes) = 'array'),
+
     -- Engagement signals — baked in from day one so we don't retrofit later.
     -- Per-user vote tracking (who voted on what) will live in a separate table when we build voting.
     upvotes         integer not null default 0,

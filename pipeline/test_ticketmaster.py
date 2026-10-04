@@ -243,6 +243,84 @@ def test_skip_rule_is_the_start_date_only():
     assert kept["end_at"] == (NOW + timedelta(hours=4)).isoformat()
 
 
+def test_cancelled_and_postponed_are_dropped_offsale_kept():
+    """Cancelled shows must not reach the map; off-sale (sold out) ones still happen."""
+    def with_status(code):
+        return {"id": f"S-{code}", "name": "Status Test",
+                "dates": {"start": {"dateTime": "2026-07-01T23:00:00Z"},
+                          "status": {"code": code}},
+                "_embedded": {"venues": [venue()]}}
+    assert tm.normalize(with_status("cancelled"), "nyc", now=NOW) is None
+    assert tm.normalize(with_status("postponed"), "nyc", now=NOW) is None
+    assert tm.normalize(with_status("offsale"), "nyc", now=NOW) is not None
+    assert tm.normalize(with_status("rescheduled"), "nyc", now=NOW) is not None
+    assert tm.normalize(with_status("onsale"), "nyc", now=NOW)["showtimes"] is None
+
+
+# --- merging repeated showings ----------------------------------------------
+
+def showing(id_, local_date, local_time, name="The Banksy Museum New York!",
+            venue_id="KovZ917ARS7"):
+    """One timed-entry slot, shaped like the real Banksy listings."""
+    return {"id": id_, "name": name,
+            "dates": {"start": {"localDate": local_date, "localTime": local_time},
+                      "timezone": "America/New_York"},
+            "_embedded": {"venues": [{**venue(lat="40.7196025", lng="-74.00135811"),
+                                      "id": venue_id}]}}
+
+
+def pairs_for(raws):
+    return [(raw, tm.normalize(raw, "nyc", now=NOW)) for raw in raws]
+
+
+def test_timed_entry_slots_merge_into_one_row():
+    """Real bug: The Banksy Museum came through as one row per 30-minute slot."""
+    times = ["14:00:00", "14:30:00", "15:00:00", "15:30:00"]
+    raws = [showing(f"LvZ{i}", "2026-07-04", t) for i, t in enumerate(times)]
+    rows = tm.merge_showings(pairs_for(raws))
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["name"] == "The Banksy Museum New York!"
+    # Spans first start to last end (15:30 EDT = 19:30Z, + 3h assumed = 22:30Z).
+    assert row["start_at"] == "2026-07-04T18:00:00+00:00"
+    assert row["end_at"] == "2026-07-04T22:30:00+00:00"
+    # Every slot kept, in order, with its own upstream ID.
+    assert [s["external_id"] for s in row["showtimes"]] == ["LvZ0", "LvZ1", "LvZ2", "LvZ3"]
+    assert row["showtimes"][0]["start_at"] == row["start_at"]
+
+
+def test_merged_id_is_stable_when_early_slots_disappear():
+    """
+    A midday run no longer sees the morning slots. The merged row must keep the
+    same external_id anyway, or every run would insert a new row for the day.
+    """
+    morning = [showing(f"A{i}", "2026-07-04", f"{h}:00:00") for i, h in enumerate(range(10, 16))]
+    afternoon = morning[3:]
+    id_full = tm.merge_showings(pairs_for(morning))[0]["external_id"]
+    id_later = tm.merge_showings(pairs_for(afternoon))[0]["external_id"]
+    assert id_full == id_later
+    assert id_full.startswith("multi:")
+
+
+def test_different_days_and_venues_stay_separate():
+    raws = ([showing(f"D1-{i}", "2026-07-04", f"1{i}:00:00") for i in range(3)]
+            + [showing(f"D2-{i}", "2026-07-05", f"1{i}:00:00") for i in range(3)]
+            + [showing(f"V2-{i}", "2026-07-04", f"1{i}:00:00", venue_id="OTHER") for i in range(3)])
+    rows = tm.merge_showings(pairs_for(raws))
+    assert len(rows) == 3
+    assert len({r["external_id"] for r in rows}) == 3
+
+
+def test_two_showings_are_not_merged():
+    """A matinee-plus-evening theatre day keeps its two real Ticketmaster rows."""
+    raws = [showing("MAT", "2026-07-04", "14:00:00", name="Hamilton"),
+            showing("EVE", "2026-07-04", "19:30:00", name="Hamilton")]
+    rows = tm.merge_showings(pairs_for(raws))
+    assert sorted(r["external_id"] for r in rows) == ["EVE", "MAT"]
+    assert all(r["showtimes"] is None for r in rows)
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

@@ -16,6 +16,7 @@ Two API constraints drive the design (verified against the Discovery API docs):
      which is exactly what `fetch_events` does.
 """
 
+import hashlib
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -50,6 +51,17 @@ ALL_DAY_DURATION = timedelta(hours=24)       # when only a date is known
 # admissions whose end dates run years out; those are listings, not events, and
 # they would sit on the map forever. One year is the hard cap.
 MAX_FUTURE = timedelta(days=365)
+
+# Statuses that mean "this is not happening". Note what is NOT here: "offsale"
+# only means ticket sales have closed (often a sell-out) and "rescheduled" events
+# carry their new date — both still take place, so both stay on the map.
+DEAD_STATUSES = {"cancelled", "postponed"}
+
+# Ticketmaster lists every performance as its own event. When one attraction has
+# at least this many showings at one venue on one local day, they are merged into
+# a single row (see merge_showings). Three, not two, so the ordinary
+# matinee-plus-evening theatre day keeps its two separate listings.
+MIN_SHOWINGS_TO_MERGE = 3
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +212,10 @@ def normalize(raw: dict, city_key: str, now: datetime | None = None):
     if not external_id or not name:
         return None
 
+    status = (((raw.get("dates") or {}).get("status") or {}).get("code") or "").lower()
+    if status in DEAD_STATUSES:
+        return None
+
     venues = ((raw.get("_embedded") or {}).get("venues")) or []
     venue = venues[0] if venues else {}
     location = venue.get("location") or {}
@@ -265,10 +281,90 @@ def normalize(raw: dict, city_key: str, now: datetime | None = None):
         "source": "scraped",
         "source_name": SOURCE_NAME,
         "external_id": str(external_id),
+        # Only merged rows carry showtimes (see merge_showings). The key is sent
+        # on every row anyway, because a bulk upsert needs every row in a batch
+        # to have the same columns.
+        "showtimes": None,
         # `created_by` is deliberately omitted — scraped events belong to no
         # user. Engagement counters are omitted too, so that re-running the
         # pipeline never resets votes on an event people have already rated.
     }
+
+
+# ---------------------------------------------------------------------------
+# Merging multiple showings
+# ---------------------------------------------------------------------------
+
+def _showing_key(raw: dict):
+    """
+    What makes two Ticketmaster events "the same attraction, same day":
+    identical name, same venue, same LOCAL date. Local, so that an evening show
+    in New York is not split from the afternoon one by the UTC date change.
+
+    Venue ID when Ticketmaster supplies one, coordinates otherwise.
+    """
+    venues = ((raw.get("_embedded") or {}).get("venues")) or []
+    venue = venues[0] if venues else {}
+    location = venue.get("location") or {}
+    venue_key = venue.get("id") or f"{location.get('latitude')},{location.get('longitude')}"
+    local_date = (((raw.get("dates") or {}).get("start") or {}).get("localDate")) or ""
+    name = (raw.get("name") or "").strip()
+    return (name, venue_key, local_date)
+
+
+def _merged_external_id(key) -> str:
+    """
+    A stable ID for a merged row, derived from the group key alone.
+
+    It must NOT be borrowed from one of the showings: Ticketmaster only returns
+    showings that have not started yet, so on a midday run the morning slots are
+    gone and "the first showing" is a different record than it was last night.
+    Borrowing its ID would make every run insert a fresh row for the same day.
+    """
+    name, venue_key, local_date = key
+    name_hash = hashlib.sha1(name.encode("utf-8")).hexdigest()[:12]
+    return f"multi:{venue_key}:{local_date}:{name_hash}"
+
+
+def merge_showings(pairs):
+    """
+    Collapse repeated showings into one row per attraction per day.
+
+    `pairs` is a list of (raw, row) — the raw dict supplies the grouping key
+    (venue ID, local date), which normalized rows deliberately don't carry.
+
+    Groups smaller than MIN_SHOWINGS_TO_MERGE pass through untouched. Larger
+    ones become a single row spanning the first start to the last end, with each
+    showing kept in `showtimes`. Real numbers from a 30-day NYC pull: The Banksy
+    Museum alone was 570 rows (15% of the feed); merging takes 654 rows to 57.
+
+    Known limitation: if a group grows past the threshold between runs (say a
+    third show is added), the earlier single rows are left behind in the table,
+    since upserts never delete. Pruning stale rows is a separate job.
+    """
+    groups = {}
+    for raw, row in pairs:
+        groups.setdefault(_showing_key(raw), []).append(row)
+
+    merged = []
+    for key, rows in groups.items():
+        if len(rows) < MIN_SHOWINGS_TO_MERGE:
+            merged.extend(rows)
+            continue
+
+        rows = sorted(rows, key=lambda r: r["start_at"])
+        first = rows[0]
+        merged.append({
+            **first,
+            "end_at": max(r["end_at"] for r in rows),
+            "external_id": _merged_external_id(key),
+            "showtimes": [
+                {"start_at": r["start_at"], "end_at": r["end_at"],
+                 "external_id": r["external_id"]}
+                for r in rows
+            ],
+        })
+    return merged
 
 
 # ---------------------------------------------------------------------------
@@ -300,7 +396,7 @@ def _iso_for_api(dt: datetime) -> str:
 
 
 def fetch_events(api_key: str, city_key: str, city_config: dict,
-                 days_ahead: int = 30, window_days: int = 7, limit: int = None):
+                 days_ahead: int = 30, window_days: int = 2, limit: int = None):
     """
     Yield raw Ticketmaster event dicts for one city.
 
@@ -364,16 +460,16 @@ def fetch_events(api_key: str, city_key: str, city_config: dict,
 
 
 def collect(api_key: str, city_key: str, city_config: dict,
-            days_ahead: int = 30, window_days: int = 7, limit: int = None):
+            days_ahead: int = 30, window_days: int = 2, limit: int = None):
     """
-    Fetch and normalize in one call.
+    Fetch, normalize and merge repeated showings in one call.
 
     Returns (rows, stats). Rows are deduplicated by external_id, because a
     single upsert batch must not contain the same conflict key twice — Postgres
     rejects that with "ON CONFLICT DO UPDATE command cannot affect row a second
     time", which is a genuinely confusing error to meet for the first time.
     """
-    rows_by_id = {}
+    pairs_by_id = {}
     seen = 0
     skipped = 0
 
@@ -388,12 +484,15 @@ def collect(api_key: str, city_key: str, city_config: dict,
         if row is None:
             skipped += 1
             continue
-        rows_by_id[row["external_id"]] = row
+        pairs_by_id[row["external_id"]] = (raw, row)
+
+    rows = merge_showings(list(pairs_by_id.values()))
 
     stats = {
         "fetched": seen,
         "skipped": skipped,
-        "duplicates": seen - skipped - len(rows_by_id),
-        "usable": len(rows_by_id),
+        "duplicates": seen - skipped - len(pairs_by_id),
+        "merged_away": len(pairs_by_id) - len(rows),
+        "usable": len(rows),
     }
-    return list(rows_by_id.values()), stats
+    return rows, stats

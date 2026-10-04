@@ -45,9 +45,10 @@ def parse_args():
                         help="Which source adapter to run (default: ticketmaster).")
     parser.add_argument("--days", type=int, default=30,
                         help="How many days ahead to search (default: 30).")
-    parser.add_argument("--window-days", type=int, default=7,
+    parser.add_argument("--window-days", type=int, default=2,
                         help="Date-window size; lower it if you hit the 1000-item "
-                             "paging cap (default: 7).")
+                             "paging cap (default: 2 — NYC overflowed 7-day "
+                             "windows by Oct 2026).")
     parser.add_argument("--limit", type=int,
                         help="Stop after this many events. Useful for smoke tests.")
     parser.add_argument("--dry-run", action="store_true",
@@ -78,8 +79,9 @@ def run_city(source_module, city_key: str, args) -> list:
 
     print(f"    fetched {stats['fetched']}  "
           f"skipped {stats['skipped']} (no coords, no start time, "
-          f"already over, or >1yr out)  "
+          f"already started, cancelled, or >1yr out)  "
           f"duplicates {stats['duplicates']}  "
+          f"merged away {stats['merged_away']} (repeat showings)  "
           f"usable {stats['usable']}")
     return rows
 
