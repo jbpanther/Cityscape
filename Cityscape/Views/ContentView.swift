@@ -36,22 +36,35 @@ struct MapView: View {
     @State var locationManager = LocationManager()
     @State private var cameraPosition: MapCameraPosition = .userLocation(fallback: .automatic)
     @State private var selectedEvent: Event?
+    @State private var selectedVenue: VenueGroup?
+    @State private var tappedPin: VenueGroup?
     @Environment(\.dismiss) private var dismiss
+
+    /// One pin per location. When a time filter is added, filter `events`
+    /// here before grouping, and the pins follow automatically.
+    private var venueGroups: [VenueGroup] {
+        VenueGroup.group(events)
+    }
 
     var body: some View {
         NavigationStack {
 
             ZStack {
 
-                Map(position: $cameraPosition, selection: $selectedEvent) {
-                    ForEach(events) { event in
-
-                        let coordinate = CLLocationCoordinate2D(latitude: event.latitude,
-                                                                longitude: event.longitude)
-                        Marker(event.name,
-                               systemImage: event.eventType?.iconName ?? "mappin.circle",
-                               coordinate: coordinate)
-                            .tag(event)
+                Map(position: $cameraPosition, selection: $tappedPin) {
+                    ForEach(venueGroups) { group in
+                        if group.events.count == 1 {
+                            Marker(group.title,
+                                   systemImage: group.nextEvent.eventType?.iconName ?? "mappin.circle",
+                                   coordinate: group.coordinate)
+                                .tag(group)
+                        } else {
+                            // The badge shows how many events are at this spot.
+                            Marker(group.title,
+                                   monogram: Text("\(group.events.count)"),
+                                   coordinate: group.coordinate)
+                                .tag(group)
+                        }
                     }
                     .tint(Color("cityscapePrimary"))
 
@@ -88,6 +101,9 @@ struct MapView: View {
             }
             .navigationDestination(item: $selectedEvent) { event in
                 DetailView(event: event)
+            }
+            .navigationDestination(item: $selectedVenue) { group in
+                VenueEventsView(group: group)
             }
             .sheet(item: $activeSheet, onDismiss: {
                 // When the create sheet dismisses, reload events so any new
@@ -129,14 +145,20 @@ struct MapView: View {
                     }
                 }
             }
-            .onChange(of: selectedEvent) { _, newValue in
-                if newValue != nil {
-                    activeSheet = nil
+            .onChange(of: tappedPin) { _, group in
+                // A lone event goes straight to its details; a busy venue
+                // opens the list. Clearing the selection lets the same pin be
+                // tapped again after coming back.
+                guard let group else { return }
+                if group.events.count == 1 {
+                    selectedEvent = group.nextEvent
                 } else {
-                    activeSheet = .bottom
-                    lastPresentedSheet = .bottom
+                    selectedVenue = group
                 }
+                tappedPin = nil
             }
+            .onChange(of: selectedEvent) { _, _ in updateBottomSheet() }
+            .onChange(of: selectedVenue) { _, _ in updateBottomSheet() }
             .task {
                 await loadEvents()
             }
@@ -144,6 +166,17 @@ struct MapView: View {
                 activeSheet = .bottom
                 lastPresentedSheet = .bottom
             }
+        }
+    }
+
+    /// Hide the bottom sheet while a details or venue screen is pushed, and
+    /// bring it back once the user returns to the map.
+    private func updateBottomSheet() {
+        if selectedEvent != nil || selectedVenue != nil {
+            activeSheet = nil
+        } else {
+            activeSheet = .bottom
+            lastPresentedSheet = .bottom
         }
     }
 
