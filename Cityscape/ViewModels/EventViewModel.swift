@@ -104,15 +104,32 @@ class EventViewModel {
         let now = Date()
         let horizon = Calendar.current.date(byAdding: .day, value: daysAhead, to: now) ?? now
 
+        // Supabase caps every response at 1,000 rows (the project's max-rows
+        // setting) and truncates silently, with no error. The 7-day window
+        // already holds ~850 scraped events, so fetch in pages until one
+        // comes back short.
+        //
+        // The secondary sort on id matters: many events share a start_at, and
+        // without a tiebreaker Postgres may order ties differently on each
+        // request, so rows could repeat or go missing across page boundaries.
+        let pageSize = 1000
+        var events: [Event] = []
+
         do {
-            let events: [Event] = try await SupabaseManager.shared
-                .from("events")
-                .select()
-                .gte("end_at", value: formatter.string(from: now))
-                .lte("start_at", value: formatter.string(from: horizon))
-                .order("start_at", ascending: true)
-                .execute()
-                .value
+            while true {
+                let page: [Event] = try await SupabaseManager.shared
+                    .from("events")
+                    .select()
+                    .gte("end_at", value: formatter.string(from: now))
+                    .lte("start_at", value: formatter.string(from: horizon))
+                    .order("start_at", ascending: true)
+                    .order("id", ascending: true)
+                    .range(from: events.count, to: events.count + pageSize - 1)
+                    .execute()
+                    .value
+                events.append(contentsOf: page)
+                if page.count < pageSize { break }
+            }
             return events
         } catch {
             print("ERROR fetching events: \(error.localizedDescription)")
