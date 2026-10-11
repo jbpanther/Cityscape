@@ -320,22 +320,87 @@ def _km(a: dict, b: dict) -> float:
                               (b["latitude"], b["longitude"]))
 
 
+# A title's "core" is everything before its first subtitle separator, so that
+# "Six: The Musical", "Chicago - The Musical", "Two Strangers (Carry a Cake
+# Across New York)" and "Robert Glasper feat. Derrick Hodge" reduce to the
+# same core as their plain-named twins in the other feed.
+_SUBTITLE = re.compile(
+    r"\s*(?::|;|\(|\s[-–]\s|\bw/|\bwith\b|\bfeat\b\.?|\bfeaturing\b)", re.IGNORECASE)
+_FILLER_WORDS = {"the", "a", "an", "musical", "show", "play", "new", "york", "nyc",
+                 "on", "broadway"}
+
+# Two listings with the same core title are only the same show if they share at
+# least this fraction of the smaller one's start times. This is what keeps
+# "New York City Ballet: All Balanchine I" apart from "...: Eclectic NYCB I":
+# same core, same venue, different nights.
+MIN_SHARED_STARTS = 0.5
+
+
+def _core_title(name: str) -> str:
+    head = _SUBTITLE.split(name, maxsplit=1)[0]
+    words = re.sub(r"[^a-z0-9 ]", " ", head.lower()).split()
+    return " ".join(w for w in words if w not in _FILLER_WORDS)
+
+
+def _same_show_different_title(a: list, b: list) -> bool:
+    """
+    Do two clusters, which have different exact titles, list the same show?
+
+    Name alone is not enough ("Hamlet" vs "Hamlet: A Ghost Story"), and nor is
+    place and time: Broadway theatres are a few hundred metres apart and nearly
+    every show starts at 7 or 8pm, so Aladdin and The Lion King share all 33
+    start times. Requiring all three is what makes this safe. On the Oct 2026
+    NYC data it made 14 merges, every one a genuine duplicate.
+    """
+    core = _core_title(a[0]["name"])
+    if not core or core != _core_title(b[0]["name"]):
+        return False
+    if _km(a[0], b[0]) > SAME_PLACE_KM:
+        return False
+    starts_a = {r["start_at"] for r in a}
+    starts_b = {r["start_at"] for r in b}
+    shared = len(starts_a & starts_b)
+    return shared >= MIN_SHARED_STARTS * min(len(starts_a), len(starts_b))
+
+
 def _group_by_show_and_place(rows):
     """
-    Group rows that are the same show at the same place: identical show key,
-    within SAME_PLACE_KM of the group's first row. A show touring two venues
-    across town stays as two groups.
+    Group rows that are the same show at the same place. Returns a list of
+    (rows, display_name).
+
+    Two passes. First, identical show key within SAME_PLACE_KM; a show touring
+    two venues across town stays as two clusters. Second, clusters whose titles
+    differ only by subtitle are joined when they really are the same show (see
+    _same_show_different_title).
     """
-    groups = {}
+    by_key = {}
     for row in rows:
-        clusters = groups.setdefault(_show_key(row["name"]), [])
+        clusters = by_key.setdefault(_show_key(row["name"]), [])
         for cluster in clusters:
             if _km(cluster[0], row) <= SAME_PLACE_KM:
                 cluster.append(row)
                 break
         else:
             clusters.append([row])
-    return [cluster for clusters in groups.values() for cluster in clusters]
+    clusters = [cluster for group in by_key.values() for cluster in group]
+
+    joined = []   # each entry is a list of clusters
+    for cluster in clusters:
+        for group in joined:
+            if any(_same_show_different_title(cluster, other) for other in group):
+                group.append(cluster)
+                break
+        else:
+            joined.append([cluster])
+
+    result = []
+    for group in joined:
+        # Name the pin after the main listing: the title with the most
+        # performances, then the shortest ("Six" over "Six: The Musical").
+        main = max(group, key=lambda c: (len({r["start_at"] for r in c}),
+                                         -len(c[0]["name"]), c[0]["name"]))
+        result.append(([row for cluster in group for row in cluster], main[0]["name"]))
+    return result
 
 
 def _merged_external_id(row) -> str:
@@ -374,14 +439,14 @@ def merge_showings(rows, relocated_ids=frozenset()):
     rows; The Banksy Museum alone was 570.
     """
     merged = []
-    for group in _group_by_show_and_place(rows):
+    for group, display_name in _group_by_show_and_place(rows):
         # Main-feed rows first, so they win both the de-duplication and `best`.
         group.sort(key=lambda r: (r["external_id"] in relocated_ids, r["start_at"]))
         by_start = {}
         for row in group:
             by_start.setdefault(row["start_at"], row)
         showings = sorted(by_start.values(), key=lambda r: r["start_at"])
-        best = group[0]
+        best = {**group[0], "name": display_name}
 
         located = next((r for r in group if r["external_id"] in relocated_ids), best)
         if len(showings) == 1:

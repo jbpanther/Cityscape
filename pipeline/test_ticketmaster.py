@@ -354,6 +354,42 @@ def test_partner_feed_duplicate_collapses_and_keeps_main_feed_content():
     assert (row["latitude"], row["longitude"]) == (40.75664, -73.98380)
 
 
+def week_of(name, prefix, at=BELASCO, days=range(4, 10)):
+    return [showing(f"{prefix}{d}", f"2026-07-{d:02d}", "20:00:00", name=name, at=at)
+            for d in days]
+
+
+def test_subtitled_twin_listings_merge():
+    """Real data: 'Six' and 'Six: The Musical' were two pins on one theatre."""
+    for a, b in [("Six", "Six: The Musical"),
+                 ("Chicago", "Chicago - The Musical"),
+                 ("Two Strangers", "Two Strangers (Carry a Cake Across New York)"),
+                 ("School Girls:Or, The African Mean Girls",
+                  "School Girls; Or, the African Mean Girls Play")]:
+        rows = tm.merge_showings(rows_for(week_of(a, "A") + week_of(b, "B")))
+        assert len(rows) == 1, (a, b)
+        assert len(rows[0]["showtimes"]) == 6
+
+
+def test_merged_twins_take_the_shorter_title():
+    rows = tm.merge_showings(rows_for(week_of("Six: The Musical", "A") + week_of("Six", "B")))
+    assert rows[0]["name"] == "Six"
+
+
+def test_same_core_title_on_different_nights_stays_separate():
+    """NYC Ballet runs several programs at one venue, all 'New York City Ballet: ...'."""
+    raws = (week_of("New York City Ballet: All Balanchine I", "A", days=range(4, 7))
+            + week_of("New York City Ballet: Eclectic NYCB I", "B", days=range(7, 10)))
+    assert len(tm.merge_showings(rows_for(raws))) == 2
+
+
+def test_neighbouring_theatres_at_the_same_times_stay_separate():
+    """Aladdin and The Lion King: 250 m apart, identical curtain times."""
+    lion_king = ("40.75799", "-73.98577")
+    raws = week_of("Aladdin", "A") + week_of("The Lion King", "L", at=lion_king)
+    assert len(tm.merge_showings(rows_for(raws))) == 2
+
+
 def test_city_suffix_is_dropped_from_names():
     for title in ["Hamilton (NY)", "Hamilton (New York, NY)", "Hamilton (nyc)"]:
         assert tm.normalize(showing("X", "2026-07-04", "19:00:00", name=title),
