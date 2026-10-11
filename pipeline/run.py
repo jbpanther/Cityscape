@@ -19,6 +19,7 @@ import argparse
 import json
 import logging
 import sys
+from datetime import datetime, timedelta, timezone
 
 import config
 from sources import ticketmaster
@@ -81,6 +82,8 @@ def run_city(source_module, city_key: str, args) -> list:
           f"skipped {stats['skipped']} (no coords, no start time, "
           f"already started, cancelled, or >1yr out)  "
           f"duplicates {stats['duplicates']}  "
+          f"relocated {stats['relocated']} (placeholder venue coords; "
+          f"{stats['unresolved']} left in place)  "
           f"merged away {stats['merged_away']} (repeat showings)  "
           f"usable {stats['usable']}")
     return rows
@@ -107,8 +110,10 @@ def main():
     city_keys = sorted(config.CITIES) if args.all_cities else [args.city]
 
     all_rows = []
+    rows_by_city = {}
     for city_key in city_keys:
-        all_rows.extend(run_city(source_module, city_key, args))
+        rows_by_city[city_key] = run_city(source_module, city_key, args)
+        all_rows.extend(rows_by_city[city_key])
 
     if not all_rows:
         print("\nNothing usable to write.")
@@ -128,6 +133,25 @@ def main():
     client = db.get_client()
     written = db.upsert_events(client, all_rows)
     print(f"\nWrote {written} rows to Supabase.")
+
+    # Remove upcoming rows this run no longer produced. Only after a complete
+    # run: with --limit, most events were never fetched, and absence would be
+    # mistaken for removal. Timed from now rather than the start of the run,
+    # because anything that started mid-run was skipped as already under way.
+    if args.limit is not None:
+        print("Skipping stale-row cleanup (--limit run is incomplete).")
+        return 0
+    now = datetime.now(timezone.utc)
+    for city_key, rows in rows_by_city.items():
+        if not rows:
+            continue  # an empty run is more likely an outage than an empty city
+        deleted = db.prune_missing(
+            client, source_module.SOURCE_NAME, city_key,
+            keep_external_ids=[r["external_id"] for r in rows],
+            start_from=now.isoformat(),
+            start_to=(now + timedelta(days=args.days)).isoformat(),
+        )
+        print(f"Removed {deleted} stale {city_key} rows no longer in the feed.")
     return 0
 
 

@@ -15,6 +15,7 @@ and no framework to remember six weeks from now.
 from datetime import datetime, timedelta, timezone
 
 from sources import ticketmaster as tm
+from sources import ticketmaster_venues as tv
 
 
 # A pinned clock. normalize() now drops events that are already over and caps
@@ -259,25 +260,28 @@ def test_cancelled_and_postponed_are_dropped_offsale_kept():
 
 # --- merging repeated showings ----------------------------------------------
 
+BANKSY = ("40.7196025", "-74.00135811")
+BELASCO = ("40.75662668", "-73.98396120")
+
+
 def showing(id_, local_date, local_time, name="The Banksy Museum New York!",
-            venue_id="KovZ917ARS7"):
-    """One timed-entry slot, shaped like the real Banksy listings."""
+            at=BANKSY):
+    """One performance or timed-entry slot, shaped like the real listings."""
     return {"id": id_, "name": name,
             "dates": {"start": {"localDate": local_date, "localTime": local_time},
                       "timezone": "America/New_York"},
-            "_embedded": {"venues": [{**venue(lat="40.7196025", lng="-74.00135811"),
-                                      "id": venue_id}]}}
+            "_embedded": {"venues": [venue(lat=at[0], lng=at[1])]}}
 
 
-def pairs_for(raws):
-    return [(raw, tm.normalize(raw, "nyc", now=NOW)) for raw in raws]
+def rows_for(raws):
+    return [tm.normalize(raw, "nyc", now=NOW) for raw in raws]
 
 
 def test_timed_entry_slots_merge_into_one_row():
     """Real bug: The Banksy Museum came through as one row per 30-minute slot."""
     times = ["14:00:00", "14:30:00", "15:00:00", "15:30:00"]
     raws = [showing(f"LvZ{i}", "2026-07-04", t) for i, t in enumerate(times)]
-    rows = tm.merge_showings(pairs_for(raws))
+    rows = tm.merge_showings(rows_for(raws))
 
     assert len(rows) == 1
     row = rows[0]
@@ -290,35 +294,90 @@ def test_timed_entry_slots_merge_into_one_row():
     assert row["showtimes"][0]["start_at"] == row["start_at"]
 
 
-def test_merged_id_is_stable_when_early_slots_disappear():
+def test_a_broadway_run_becomes_one_row():
+    """Real bug: Hamilton was 10 stacked pins in one week, one per performance."""
+    raws = [showing("MAT", "2026-07-04", "14:00:00", name="Hamilton", at=BELASCO),
+            showing("EVE", "2026-07-04", "19:30:00", name="Hamilton", at=BELASCO),
+            showing("SUN", "2026-07-05", "15:00:00", name="Hamilton", at=BELASCO)]
+    rows = tm.merge_showings(rows_for(raws))
+    assert len(rows) == 1
+    assert [s["external_id"] for s in rows[0]["showtimes"]] == ["MAT", "EVE", "SUN"]
+    assert rows[0]["start_at"] == "2026-07-04T18:00:00+00:00"
+    assert rows[0]["end_at"] == "2026-07-05T22:00:00+00:00"
+
+
+def test_single_showing_keeps_its_own_id():
+    rows = tm.merge_showings(rows_for([showing("ONE", "2026-07-04", "20:00:00")]))
+    assert rows[0]["external_id"] == "ONE"
+    assert rows[0]["showtimes"] is None
+
+
+def test_merged_id_is_stable_as_performances_pass():
     """
-    A midday run no longer sees the morning slots. The merged row must keep the
-    same external_id anyway, or every run would insert a new row for the day.
+    Each run only sees performances that have not started yet. The merged row
+    must keep the same external_id anyway, or every run would insert a new row.
     """
-    morning = [showing(f"A{i}", "2026-07-04", f"{h}:00:00") for i, h in enumerate(range(10, 16))]
-    afternoon = morning[3:]
-    id_full = tm.merge_showings(pairs_for(morning))[0]["external_id"]
-    id_later = tm.merge_showings(pairs_for(afternoon))[0]["external_id"]
-    assert id_full == id_later
-    assert id_full.startswith("multi:")
+    run = [showing(f"A{d}", f"2026-07-{d:02d}", "20:00:00") for d in range(4, 10)]
+    id_today = tm.merge_showings(rows_for(run))[0]["external_id"]
+    id_later = tm.merge_showings(rows_for(run[3:]))[0]["external_id"]
+    assert id_today == id_later
+    assert id_today.startswith("multi:")
 
 
-def test_different_days_and_venues_stay_separate():
-    raws = ([showing(f"D1-{i}", "2026-07-04", f"1{i}:00:00") for i in range(3)]
-            + [showing(f"D2-{i}", "2026-07-05", f"1{i}:00:00") for i in range(3)]
-            + [showing(f"V2-{i}", "2026-07-04", f"1{i}:00:00", venue_id="OTHER") for i in range(3)])
-    rows = tm.merge_showings(pairs_for(raws))
-    assert len(rows) == 3
-    assert len({r["external_id"] for r in rows}) == 3
+def test_same_show_at_distant_venues_stays_separate():
+    uptown = ("40.8099", "-73.9493")   # ~6 km from the Belasco
+    raws = ([showing(f"B{i}", "2026-07-04", f"1{i}:00:00", name="Comedy Night", at=BELASCO)
+             for i in range(2)]
+            + [showing(f"U{i}", "2026-07-04", f"1{i}:00:00", name="Comedy Night", at=uptown)
+               for i in range(2)])
+    rows = tm.merge_showings(rows_for(raws))
+    assert len(rows) == 2
+    assert len({r["external_id"] for r in rows}) == 2
 
 
-def test_two_showings_are_not_merged():
-    """A matinee-plus-evening theatre day keeps its two real Ticketmaster rows."""
-    raws = [showing("MAT", "2026-07-04", "14:00:00", name="Hamilton"),
-            showing("EVE", "2026-07-04", "19:30:00", name="Hamilton")]
-    rows = tm.merge_showings(pairs_for(raws))
-    assert sorted(r["external_id"] for r in rows) == ["EVE", "MAT"]
-    assert all(r["showtimes"] is None for r in rows)
+def test_partner_feed_duplicate_collapses_and_keeps_main_feed_content():
+    """
+    Real data: 'Hamilton (NY)' (main feed) and 'Hamilton' (partner feed, moved
+    off a placeholder by address lookup, ~20 m away) are the same performance.
+    """
+    main = showing("Z1MAIN", "2026-07-04", "19:00:00", name="Hamilton (NY)", at=BELASCO)
+    main["info"] = "The main feed's description."
+    partner = showing("Z7PART", "2026-07-04", "19:00:00", name="Hamilton",
+                      at=("40.75664", "-73.98380"))
+    rows = tm.merge_showings(rows_for([partner, main]), relocated_ids={"Z7PART"})
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["external_id"] == "Z1MAIN"
+    assert row["name"] == "Hamilton"
+    assert row["description"] == "The main feed's description."
+    # The address-derived location wins.
+    assert (row["latitude"], row["longitude"]) == (40.75664, -73.98380)
+
+
+def test_city_suffix_is_dropped_from_names():
+    for title in ["Hamilton (NY)", "Hamilton (New York, NY)", "Hamilton (nyc)"]:
+        assert tm.normalize(showing("X", "2026-07-04", "19:00:00", name=title),
+                            "nyc", now=NOW)["name"] == "Hamilton"
+
+
+# --- placeholder venue coordinates ------------------------------------------
+
+def at_venue(id_, lat, lng, address):
+    return {"_embedded": {"venues": [{"id": id_, "location": {"latitude": lat, "longitude": lng},
+                                      "address": {"line1": address}}]}}
+
+
+def test_shared_point_with_different_addresses_is_a_placeholder():
+    raws = [at_venue("A", "40.7593", "-73.990196", "111 W. 44th St."),
+            at_venue("B", "40.7593", "-73.990196", "149 W. 45th St.")]
+    assert tv.find_placeholder_coords(raws) == {(40.7593, -73.990196)}
+
+
+def test_one_building_with_many_stages_is_not_a_placeholder():
+    """New World Stages: five stage records, one real address."""
+    raws = [at_venue("S1", "40.763", "-73.9876", "340 West 50th Street"),
+            at_venue("S2", "40.763", "-73.9876", "340 W 50th St")]
+    assert tv.find_placeholder_coords(raws) == set()
 
 
 if __name__ == "__main__":

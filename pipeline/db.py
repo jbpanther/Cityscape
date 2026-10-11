@@ -58,3 +58,51 @@ def upsert_events(client, rows, batch_size: int = BATCH_SIZE) -> int:
         log.info("Upserted %d/%d rows", written, len(rows))
 
     return written
+
+
+def prune_missing(client, source_name: str, city: str, keep_external_ids,
+                  start_from: str, start_to: str) -> int:
+    """
+    Delete upcoming rows from a source that its latest full run no longer produced.
+
+    Upserts never delete, so without this every change in how rows are shaped
+    (one row per performance → one row per show) leaves the old rows behind on
+    the map forever. It also removes events the source has since dropped.
+
+    Only rows that START inside the run's search window are candidates. That
+    window is what makes this safe:
+      - an event already under way (start < now) was never going to be
+        re-fetched, so it is left alone, as is a festival mid-run;
+      - events beyond the --days horizon were outside the search, so absence
+        from the run says nothing about them.
+    User-submitted events have no source_name and are never touched.
+
+    Note this deletes the row's votes too. Fine while the app has no real users.
+
+    Returns the number of rows deleted.
+    """
+    keep = set(keep_external_ids)
+    stale_ids, offset, page_size = [], 0, 1000
+    while True:
+        page = (
+            client.table("events")
+            .select("id, external_id")
+            .eq("source_name", source_name)
+            .eq("city", city)
+            .gte("start_at", start_from)
+            .lte("start_at", start_to)
+            .order("id")
+            .range(offset, offset + page_size - 1)
+            .execute()
+        ).data or []
+        stale_ids += [r["id"] for r in page if r["external_id"] not in keep]
+        offset += page_size
+        if len(page) < page_size:
+            break
+
+    for start in range(0, len(stale_ids), BATCH_SIZE):
+        batch = stale_ids[start:start + BATCH_SIZE]
+        client.table("events").delete().in_("id", batch).execute()
+        log.info("Deleted %d/%d stale rows", start + len(batch), len(stale_ids))
+
+    return len(stale_ids)

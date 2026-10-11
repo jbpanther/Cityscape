@@ -18,11 +18,14 @@ Two API constraints drive the design (verified against the Discovery API docs):
 
 import hashlib
 import logging
+import re
 import time
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import httpx
+
+from sources import ticketmaster_venues as venues
 
 log = logging.getLogger(__name__)
 
@@ -57,11 +60,13 @@ MAX_FUTURE = timedelta(days=365)
 # carry their new date — both still take place, so both stay on the map.
 DEAD_STATUSES = {"cancelled", "postponed"}
 
-# Ticketmaster lists every performance as its own event. When one attraction has
-# at least this many showings at one venue on one local day, they are merged into
-# a single row (see merge_showings). Three, not two, so the ordinary
-# matinee-plus-evening theatre day keeps its two separate listings.
-MIN_SHOWINGS_TO_MERGE = 3
+# Ticketmaster lists every performance as its own event, so a Broadway show
+# running all month is ~35 rows stacked on one theatre. All performances of one
+# show at one place are merged into a single row (see merge_showings), with each
+# performance kept in `showtimes`. Rows count as "one place" within this distance:
+# wide enough to join a listing to its relocated partner-feed twin (10-70 m apart,
+# up to ~700 m where Ticketmaster's own venue record is wrong, as at the Blue Note).
+SAME_PLACE_KM = 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +204,16 @@ def _description(raw: dict, venue: dict) -> str:
     return ""
 
 
+# Ticketmaster's main feed tags some titles with a city ("Hamilton (NY)", "The
+# Lion King (New York, NY)") while the partner feed doesn't. Pointless on a map
+# that is already in New York, and it stops the two copies matching.
+_CITY_SUFFIX = re.compile(r"\s*\((?:NY|NYC|New York(?:, NY)?)\)\s*$", re.IGNORECASE)
+
+
+def _display_name(name) -> str:
+    return _CITY_SUFFIX.sub("", (name or "").strip())
+
+
 def normalize(raw: dict, city_key: str, now: datetime | None = None):
     """
     Turn one Ticketmaster event into an `events` row.
@@ -208,7 +223,7 @@ def normalize(raw: dict, city_key: str, now: datetime | None = None):
     venue coordinates, and a map-first app has nothing to do with those.
     """
     external_id = raw.get("id")
-    name = (raw.get("name") or "").strip()
+    name = _display_name(raw.get("name"))
     if not external_id or not name:
         return None
 
@@ -295,75 +310,107 @@ def normalize(raw: dict, city_key: str, now: datetime | None = None):
 # Merging multiple showings
 # ---------------------------------------------------------------------------
 
-def _showing_key(raw: dict):
+def _show_key(name: str) -> str:
+    """Case and punctuation-insensitive name: 'MJ' and 'MJ!' are one show."""
+    return " ".join(re.sub(r"[^a-z0-9 ]", " ", name.lower()).split())
+
+
+def _km(a: dict, b: dict) -> float:
+    return venues._km_between((a["latitude"], a["longitude"]),
+                              (b["latitude"], b["longitude"]))
+
+
+def _group_by_show_and_place(rows):
     """
-    What makes two Ticketmaster events "the same attraction, same day":
-    identical name, same venue, same LOCAL date. Local, so that an evening show
-    in New York is not split from the afternoon one by the UTC date change.
-
-    Venue ID when Ticketmaster supplies one, coordinates otherwise.
-    """
-    venues = ((raw.get("_embedded") or {}).get("venues")) or []
-    venue = venues[0] if venues else {}
-    location = venue.get("location") or {}
-    venue_key = venue.get("id") or f"{location.get('latitude')},{location.get('longitude')}"
-    local_date = (((raw.get("dates") or {}).get("start") or {}).get("localDate")) or ""
-    name = (raw.get("name") or "").strip()
-    return (name, venue_key, local_date)
-
-
-def _merged_external_id(key) -> str:
-    """
-    A stable ID for a merged row, derived from the group key alone.
-
-    It must NOT be borrowed from one of the showings: Ticketmaster only returns
-    showings that have not started yet, so on a midday run the morning slots are
-    gone and "the first showing" is a different record than it was last night.
-    Borrowing its ID would make every run insert a fresh row for the same day.
-    """
-    name, venue_key, local_date = key
-    name_hash = hashlib.sha1(name.encode("utf-8")).hexdigest()[:12]
-    return f"multi:{venue_key}:{local_date}:{name_hash}"
-
-
-def merge_showings(pairs):
-    """
-    Collapse repeated showings into one row per attraction per day.
-
-    `pairs` is a list of (raw, row) — the raw dict supplies the grouping key
-    (venue ID, local date), which normalized rows deliberately don't carry.
-
-    Groups smaller than MIN_SHOWINGS_TO_MERGE pass through untouched. Larger
-    ones become a single row spanning the first start to the last end, with each
-    showing kept in `showtimes`. Real numbers from a 30-day NYC pull: The Banksy
-    Museum alone was 570 rows (15% of the feed); merging takes 654 rows to 57.
-
-    Known limitation: if a group grows past the threshold between runs (say a
-    third show is added), the earlier single rows are left behind in the table,
-    since upserts never delete. Pruning stale rows is a separate job.
+    Group rows that are the same show at the same place: identical show key,
+    within SAME_PLACE_KM of the group's first row. A show touring two venues
+    across town stays as two groups.
     """
     groups = {}
-    for raw, row in pairs:
-        groups.setdefault(_showing_key(raw), []).append(row)
+    for row in rows:
+        clusters = groups.setdefault(_show_key(row["name"]), [])
+        for cluster in clusters:
+            if _km(cluster[0], row) <= SAME_PLACE_KM:
+                cluster.append(row)
+                break
+        else:
+            clusters.append([row])
+    return [cluster for clusters in groups.values() for cluster in clusters]
 
+
+def _merged_external_id(row) -> str:
+    """
+    A stable ID for a merged row: the show plus roughly where it is (a ~1 km
+    grid square), and nothing that changes from run to run.
+
+    It must NOT be borrowed from one of the showings: Ticketmaster only returns
+    showings that have not started yet, so tonight's performance is a different
+    "first showing" than tomorrow's. Borrowing its ID would make every run
+    insert a fresh row for the same show.
+    """
+    name_hash = hashlib.sha1(_show_key(row["name"]).encode("utf-8")).hexdigest()[:12]
+    return f"multi:{row['latitude']:.2f},{row['longitude']:.2f}:{name_hash}"
+
+
+def merge_showings(rows, relocated_ids=frozenset()):
+    """
+    Collapse every performance of a show at one place into a single row.
+
+    Two jobs in one pass, because they need the same grouping:
+
+      - Duplicates: the main feed and the partner feed often list the very same
+        performance. Within a group, one row per start time survives,
+        preferring the main feed's row (its name and description are richer).
+      - Repeats: a group with two or more distinct performances becomes one row
+        spanning the first start to the last end, with each performance in
+        `showtimes`. A group with one performance passes through unchanged,
+        keeping its Ticketmaster ID.
+
+    `relocated_ids` are rows whose coordinates came from an address lookup (see
+    ticketmaster_venues). Their location is preferred, because the address is
+    the more reliable field, but their other content is not.
+
+    Real numbers, 30-day NYC pull, Oct 2026: 92 long-running shows were 1,561
+    rows; The Banksy Museum alone was 570.
+    """
     merged = []
-    for key, rows in groups.items():
-        if len(rows) < MIN_SHOWINGS_TO_MERGE:
-            merged.extend(rows)
+    for group in _group_by_show_and_place(rows):
+        # Main-feed rows first, so they win both the de-duplication and `best`.
+        group.sort(key=lambda r: (r["external_id"] in relocated_ids, r["start_at"]))
+        by_start = {}
+        for row in group:
+            by_start.setdefault(row["start_at"], row)
+        showings = sorted(by_start.values(), key=lambda r: r["start_at"])
+        best = group[0]
+
+        located = next((r for r in group if r["external_id"] in relocated_ids), best)
+        if len(showings) == 1:
+            merged.append({**best, "latitude": located["latitude"],
+                           "longitude": located["longitude"]})
             continue
 
-        rows = sorted(rows, key=lambda r: r["start_at"])
-        first = rows[0]
-        merged.append({
-            **first,
-            "end_at": max(r["end_at"] for r in rows),
-            "external_id": _merged_external_id(key),
+        row = {
+            **best,
+            "latitude": located["latitude"],
+            "longitude": located["longitude"],
+            "start_at": showings[0]["start_at"],
+            "end_at": max(r["end_at"] for r in showings),
             "showtimes": [
                 {"start_at": r["start_at"], "end_at": r["end_at"],
                  "external_id": r["external_id"]}
-                for r in rows
+                for r in showings
             ],
-        })
+        }
+        row["external_id"] = _merged_external_id(row)
+        merged.append(row)
+
+    # Two shows with the same name can (rarely) land in the same grid square.
+    seen = {}
+    for row in merged:
+        n = seen.get(row["external_id"], 0)
+        seen[row["external_id"]] = n + 1
+        if n:
+            row["external_id"] += f":{n}"
     return merged
 
 
@@ -462,7 +509,8 @@ def fetch_events(api_key: str, city_key: str, city_config: dict,
 def collect(api_key: str, city_key: str, city_config: dict,
             days_ahead: int = 30, window_days: int = 2, limit: int = None):
     """
-    Fetch, normalize and merge repeated showings in one call.
+    Fetch, normalize, fix placeholder venue locations, and merge repeated
+    showings, in one call.
 
     Returns (rows, stats). Rows are deduplicated by external_id, because a
     single upsert batch must not contain the same conflict key twice — Postgres
@@ -486,12 +534,16 @@ def collect(api_key: str, city_key: str, city_config: dict,
             continue
         pairs_by_id[row["external_id"]] = (raw, row)
 
-    rows = merge_showings(list(pairs_by_id.values()))
+    pairs = list(pairs_by_id.values())
+    relocated_ids, unresolved = venues.relocate(pairs, venues.VenueResolver(api_key))
+    rows = merge_showings([row for _, row in pairs], relocated_ids)
 
     stats = {
         "fetched": seen,
         "skipped": skipped,
         "duplicates": seen - skipped - len(pairs_by_id),
+        "relocated": len(relocated_ids),
+        "unresolved": unresolved,
         "merged_away": len(pairs_by_id) - len(rows),
         "usable": len(rows),
     }
